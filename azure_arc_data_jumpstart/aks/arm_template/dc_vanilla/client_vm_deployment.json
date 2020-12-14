@@ -306,9 +306,9 @@
                         }
                     },
                     "imageReference": {
-                        "publisher": "MicrosoftWindowsServer",
-                        "offer": "WindowsServer",
-                        "sku": "[parameters('windowsOSVersion')]",
+                       "publisher": "microsoftsqlserver",
+                        "offer": "sql2019-ws2019",
+                        "sku": "standard",
                         "version": "latest"
                     }
                 },
