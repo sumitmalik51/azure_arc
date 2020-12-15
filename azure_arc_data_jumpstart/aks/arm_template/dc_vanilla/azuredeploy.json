@@ -254,7 +254,7 @@
         },
         {
         "type": "Microsoft.Resources/deployments",
-        "apiVersion": "2019-10-01",
+        "apiVersion": "2017-05-10",
         "name": "linkedTemplate",
         "dependsOn": [
             "[concat(resourceId('Microsoft.ContainerService/managedClusters', parameters('clusterName')))]"
