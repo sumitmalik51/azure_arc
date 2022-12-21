@@ -70,8 +70,8 @@ Invoke-WebRequest ($templateBaseUrl + "artifacts/PSProfile.ps1") -OutFile $PsHom
 .$PsHome\Profile.ps1
 
 # Extending C:\ partition to the maximum size
-Write-Host "Extending C:\ partition to the maximum size"
-Resize-Partition -DriveLetter C -Size $(Get-PartitionSupportedSize -DriveLetter C).SizeMax
+#Write-Host "Extending C:\ partition to the maximum size"
+#Resize-Partition -DriveLetter C -Size $(Get-PartitionSupportedSize -DriveLetter C).SizeMax
 
 # Installing Posh-SSH PowerShell Module
 Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force
