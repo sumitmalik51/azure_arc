@@ -15,7 +15,7 @@ param (
     [string]$deployResourceBridge,
     [string]$natDNS
 )
-
+$templateBaseUrl = "https://github.com/sumitmalik51/azure_arc/tree/cloudlabs-automated/azure_jumpstart_hcibox/"
 [System.Environment]::SetEnvironmentVariable('adminUsername', $adminUsername,[System.EnvironmentVariableTarget]::Machine)
 [System.Environment]::SetEnvironmentVariable('spnClientID', $spnClientId,[System.EnvironmentVariableTarget]::Machine)
 [System.Environment]::SetEnvironmentVariable('spnClientSecret', $spnClientSecret,[System.EnvironmentVariableTarget]::Machine)
