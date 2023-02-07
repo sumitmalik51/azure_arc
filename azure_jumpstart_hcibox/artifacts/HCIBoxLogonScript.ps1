@@ -15,30 +15,6 @@ $Env:VMPath = "C:\VMs"
 
 Start-Transcript -Path $Env:HCIBoxLogsDir\HCIBoxLogonScript.log
 
-$cliDir = New-Item -Path "$Env:ArcBoxDir\.cli\" -Name ".servers" -ItemType Directory
-
-if(-not $($cliDir.Parent.Attributes.HasFlag([System.IO.FileAttributes]::Hidden))) {
-    $folder = Get-Item $cliDir.Parent.FullName -ErrorAction SilentlyContinue
-    $folder.Attributes += [System.IO.FileAttributes]::Hidden
-}
-
-$Env:AZURE_CONFIG_DIR = $cliDir.FullName
-
-# Configure storage pools and data disks
-Write-Header "Configuring storage"
-New-StoragePool -FriendlyName AsHciPool -StorageSubSystemFriendlyName '*storage*' -PhysicalDisks (Get-PhysicalDisk -CanPool $true)
-$disks = Get-StoragePool -FriendlyName AsHciPool -IsPrimordial $False | Get-PhysicalDisk
-$diskNum = $disks.Count
-New-VirtualDisk -StoragePoolFriendlyName AsHciPool -FriendlyName AsHciDisk -ResiliencySettingName Simple -NumberOfColumns $diskNum -UseMaximumSize
-$vDisk = Get-VirtualDisk -FriendlyName AsHciDisk
-if ($vDisk | Get-Disk | Where-Object PartitionStyle -eq 'raw') {
-    $vDisk | Get-Disk | Initialize-Disk -Passthru | New-Partition -DriveLetter V -UseMaximumSize | Format-Volume -NewFileSystemLabel AsHciData -AllocationUnitSize 64KB -FileSystem NTFS
-}
-elseif ($vDisk | Get-Disk | Where-Object PartitionStyle -eq 'GPT') {
-    $vDisk | Get-Disk | New-Partition -DriveLetter V -UseMaximumSize | Format-Volume -NewFileSystemLabel AsHciData -AllocationUnitSize 64KB -FileSystem NTFS
-}
-New-Item -Path "V:\" -Name "VMs" -ItemType "directory"
-
 # Required for CLI commands
 Write-Header "Az CLI Login"
 az login --service-principal --username $Env:spnClientID --password $Env:spnClientSecret --tenant $Env:spnTenantId
@@ -57,9 +33,6 @@ az provider register --namespace Microsoft.ResourceConnector --wait
 
 Stop-Transcript
 
-# Build HCI cluster
-Write-Header "Deploying HCI cluster"
-& "$Env:HCIBoxDir\New-HCIBoxCluster.ps1"
 
 # Register HCI cluster
 if ($env:registerCluster -eq $true) {
