@@ -25,13 +25,6 @@ $user = "jumpstart.local\administrator"
 $password = ConvertTo-SecureString -String $SDNConfig.SDNAdminPassword -AsPlainText -Force
 $adcred = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $user, $password
 
-Write-Host "Installing Required Modules" -ForegroundColor Green -BackgroundColor Black
-Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force
-Install-WindowsFeature -name RSAT-Clustering-Powershell
-$ModuleNames = "Az.Resources", "Az.Accounts", "Az.stackhci", "Az.MonitoringSolutions", "Az.ConnectedMachine"
-foreach ($ModuleName in $ModuleNames) {
-    Install-Module -Name $ModuleName -Force
-}
 
 # Required for CLI commands
 Write-Host "Az Login"
