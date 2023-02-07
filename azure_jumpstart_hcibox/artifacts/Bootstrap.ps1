@@ -73,32 +73,6 @@ Invoke-WebRequest ($templateBaseUrl + "artifacts/PSProfile.ps1") -OutFile $PsHom
 Write-Host "Extending C:\ partition to the maximum size"
 Resize-Partition -DriveLetter C -Size $(Get-PartitionSupportedSize -DriveLetter C).SizeMax
 
-# Installing Posh-SSH PowerShell Module
-Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force
-Install-Module -Name Posh-SSH -Force
-
-# Installing tools
-Write-Header "Installing Chocolatey Apps"
-$chocolateyAppList = 'azure-cli,az.powershell,kubernetes-cli,vcredist140,microsoft-edge,azcopy10,vscode,git,7zip,kubectx,terraform,putty.install,kubernetes-helm,ssms,dotnetcore-3.1-sdk,setdefaultbrowser,zoomit,azure-data-studio'
-
-try {
-    choco config get cacheLocation
-}
-catch {
-    Write-Output "Chocolatey not detected, trying to install now"
-    Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org/install.ps1'))
-}
-
-Write-Host "Chocolatey Apps Specified"
-
-$appsToInstall = $chocolateyAppList -split "," | ForEach-Object { "$($_.Trim())" }
-
-foreach ($app in $appsToInstall)
-{
-    Write-Host "Installing $app"
-    & choco install $app /y -Force | Write-Output
-}
-
 Write-Header "Downloading Azure Stack HCI configuration scripts"
 Invoke-WebRequest "https://raw.githubusercontent.com/dkirby-ms/azure_arc/main/img/hcibox_wallpaper.png" -OutFile $Env:HCIBoxDir\wallpaper.png
 Invoke-WebRequest https://aka.ms/wacdownload -OutFile $Env:HCIBoxWACDir\WindowsAdminCenter.msi
@@ -127,53 +101,10 @@ Invoke-WebRequest ($templateBaseUrl + "artifacts/LogInstructions.txt") -OutFile 
 # Disabling Windows Server Manager Scheduled Task
 Get-ScheduledTask -TaskName ServerManager | Disable-ScheduledTask
 
-# Disable Server Manager WAC prompt
-$RegistryPath = "HKLM:\SOFTWARE\Microsoft\ServerManager"
-$Name = "DoNotPopWACConsoleAtSMLaunch"
-$Value = "1"
-if (-not (Test-Path $RegistryPath)) {
-    New-Item -Path $RegistryPath -Force | Out-Null
-}
-New-ItemProperty -Path $RegistryPath -Name $Name -Value $Value -PropertyType DWORD -Force
-
-# Disable Network Profile prompt
-$RegistryPath = "HKLM:\System\CurrentControlSet\Control\Network\NewNetworkWindowOff"
-if (-not (Test-Path $RegistryPath)) {
-    New-Item -Path $RegistryPath -Force | Out-Null
-}
-
-# Configuring CredSSP and WinRM
-Enable-WSManCredSSP -Role Server -Force | Out-Null
-Enable-WSManCredSSP -Role Client -DelegateComputer $Env:COMPUTERNAME -Force | Out-Null
-
 # Creating scheduled task for HCIBoxLogonScript.ps1
 $Trigger = New-ScheduledTaskTrigger -AtLogOn
 $Action = New-ScheduledTaskAction -Execute "PowerShell.exe" -Argument $Env:HCIBoxDir\HCIBoxLogonScript.ps1
 Register-ScheduledTask -TaskName "HCIBoxLogonScript" -Trigger $Trigger -User $adminUsername -Action $Action -RunLevel "Highest" -Force
-
-# Disable Edge 'First Run' Setup
-$edgePolicyRegistryPath  = 'HKLM:SOFTWARE\Policies\Microsoft\Edge'
-$desktopSettingsRegistryPath = 'HKCU:SOFTWARE\Microsoft\Windows\Shell\Bags\1\Desktop'
-$firstRunRegistryName  = 'HideFirstRunExperience'
-$firstRunRegistryValue = '0x00000001'
-$savePasswordRegistryName = 'PasswordManagerEnabled'
-$savePasswordRegistryValue = '0x00000000'
-$autoArrangeRegistryName = 'FFlags'
-$autoArrangeRegistryValue = '1075839525'
-
-if (-NOT (Test-Path -Path $edgePolicyRegistryPath)) {
-    New-Item -Path $edgePolicyRegistryPath -Force | Out-Null
-}
-
-New-ItemProperty -Path $edgePolicyRegistryPath -Name $firstRunRegistryName -Value $firstRunRegistryValue -PropertyType DWORD -Force
-New-ItemProperty -Path $edgePolicyRegistryPath -Name $savePasswordRegistryName -Value $savePasswordRegistryValue -PropertyType DWORD -Force
-Set-ItemProperty -Path $desktopSettingsRegistryPath -Name $autoArrangeRegistryName -Value $autoArrangeRegistryValue -Force
-
-# Install Hyper-V and reboot
-Write-Header "Installing Hyper-V"
-Enable-WindowsOptionalFeature -Online -FeatureName Containers -All -NoRestart
-Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -NoRestart
-Install-WindowsFeature -Name Hyper-V -IncludeAllSubFeature -IncludeManagementTools -Restart
 
 # Clean up Bootstrap.log
 Write-Header "Clean up Bootstrap.log"
