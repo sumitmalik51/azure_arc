@@ -111,3 +111,5 @@ Write-Header "Clean up Bootstrap.log"
 Stop-Transcript
 $logSuppress = Get-Content $Env:HCIBoxLogsDir\Bootstrap.log | Where-Object { $_ -notmatch "Host Application: powershell.exe" } 
 $logSuppress | Set-Content $Env:HCIBoxLogsDir\Bootstrap.log -Force
+
+Restart-Computer
