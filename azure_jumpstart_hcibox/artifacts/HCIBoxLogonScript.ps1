@@ -13,91 +13,71 @@ $Env:ToolsDir = "C:\Tools"
 $Env:tempDir = "C:\Temp"
 $Env:VMPath = "C:\VMs"
 
-Start-Transcript -Path $Env:HCIBoxLogsDir\Deploy-AKS.log
+Start-Transcript -Path $Env:HCIBoxLogsDir\HCIBoxLogonScript.log
 
-# Import Configuration Module and create Azure login credentials
-Write-Header 'Importing config'
-$ConfigurationDataFile = 'C:\HCIBox\HCIBox-Config.psd1'
-$SDNConfig = Import-PowerShellDataFile -Path $ConfigurationDataFile
+# Required for CLI commands
+Write-Header "Az CLI Login"
+az login --service-principal --username $Env:spnClientID --password $Env:spnClientSecret --tenant $Env:spnTenantId
 
-# Generate credential objects
-Write-Header 'Creating credentials and connecting to Azure'
-$user = "jumpstart.local\administrator"
-$password = ConvertTo-SecureString -String $SDNConfig.SDNAdminPassword -AsPlainText -Force
-$adcred = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $user, $password # Domain credential
 
-$azureAppCred = (New-Object System.Management.Automation.PSCredential $env:spnClientID, (ConvertTo-SecureString -String $env:spnClientSecret -AsPlainText -Force))
-Connect-AzAccount -ServicePrincipal -Subscription $env:subscriptionId -Tenant $env:spnTenantId -Credential $azureAppCred
-$context = Get-AzContext # Azure credential
+Stop-Transcript
 
-Register-AzResourceProvider -ProviderNamespace Microsoft.Kubernetes -Confirm:$false
-Register-AzResourceProvider -ProviderNamespace Microsoft.KubernetesConfiguration -Confirm:$false
 
-# Install latest versions of Nuget and PowershellGet
-Write-Header "Install latest versions of Nuget and PowershellGet"
-Invoke-Command -VMName $SDNConfig.HostList -Credential $adcred -ScriptBlock {
-    Enable-PSRemoting -Force
-    $ProgressPreference = "SilentlyContinue"
-    Install-PackageProvider -Name NuGet -Force 
-    Set-PSRepository -Name "PSGallery" -InstallationPolicy Trusted
-    Install-Module -Name PowershellGet -Force
-    $ProgressPreference = "Continue"
+# Register HCI cluster
+if ($env:registerCluster -eq $true) {
+    Write-Header "Registering HCI cluster"
+    & "$Env:HCIBoxDir\Register-AzSHCI.ps1"
 }
 
-# Install necessary AZ modules and initialize akshci on each node
-Write-Header "Install necessary AZ modules plus AksHCI module and initialize akshci on each node"
-
-Invoke-Command -VMName $SDNConfig.HostList  -Credential $adcred -ScriptBlock {
-    Write-Host "Installing Required Modules"
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    $ProgressPreference = "SilentlyContinue"
-    Install-Module -Name AksHci -Force -AcceptLicense
-    Import-Module Az.Accounts
-    Import-Module Az.Resources
-    Import-Module AzureAD
-    Import-Module AksHci
-    Initialize-AksHciNode
-    $ProgressPreference = "Continue"
+# deploy AKS
+if (($env:registerCluster -eq $true) -and ($env:deployAKSHCI -eq $true)) {
+    Write-Header "Deploying AKS"
+    & "$Env:HCIBoxDir\Deploy-AKS.ps1"
 }
 
-# Generate unique name for workload cluster
-$rand = New-Object System.Random
-$prefixLen = 5
-[string]$namingPrefix = ''
-for($i = 0; $i -lt $prefixLen; $i++)
-{
-    $namingPrefix += [char]$rand.Next(97,122)
-}
-$clusterName = $SDNConfig.AKSworkloadClusterName + "-" + $namingPrefix
-[System.Environment]::SetEnvironmentVariable('AKSClusterName', $clusterName,[System.EnvironmentVariableTarget]::Machine)
-
-# Install AksHci - only need to perform the following on one of the nodes
-$rg = $env:resourceGroup
-Write-Header "Prepping AKS Install"
-Invoke-Command -VMName $SDNConfig.HostList[0] -Credential $adcred -ScriptBlock  {
-    $vnet = New-AksHciNetworkSetting -name $using:SDNConfig.AKSvnetname -vSwitchName $using:SDNConfig.AKSvSwitchName -k8sNodeIpPoolStart $using:SDNConfig.AKSNodeStartIP -k8sNodeIpPoolEnd $using:SDNConfig.AKSNodeEndIP -vipPoolStart $using:SDNConfig.AKSVIPStartIP -vipPoolEnd $using:SDNConfig.AKSVIPEndIP -ipAddressPrefix $using:SDNConfig.AKSIPPrefix -gateway $using:SDNConfig.AKSGWIP -dnsServers $using:SDNConfig.AKSDNSIP -vlanID $using:SDNConfig.AKSVlanID        
-    Set-AksHciConfig -imageDir $using:SDNConfig.AKSImagedir -workingDir $using:SDNConfig.AKSWorkingdir -cloudConfigLocation $using:SDNConfig.AKSCloudConfigdir -vnet $vnet -cloudservicecidr $using:SDNConfig.AKSCloudSvcidr -controlPlaneVmSize Standard_D4s_v3
-    $azurecred = Connect-AzAccount -ServicePrincipal -Subscription $using:context.Subscription.Id -Tenant $using:context.Subscription.TenantId -Credential $using:azureAppCred
-    Set-AksHciRegistration -subscriptionId $azurecred.Context.Subscription.Id -resourceGroupName $using:rg -Tenant $azurecred.Context.Tenant.Id -Credential $using:azureAppCred -Region "eastus"
-    Write-Host "Ready to Install AKS on HCI Cluster"
-    Install-AksHci 
+# Deploy Arc Resource Bridge
+if (($env:registerCluster -eq $true) -and ($env:deployResourceBridge -eq $true)) {
+    Write-Header "Deploying Arc Resource Bridge"
+    & "$Env:HCIBoxDir\Deploy-ArcResourceBridge.ps1"
 }
 
-# Create new AKS target cluster and connect it to Azure
-Write-Header "Creating AKS target cluster"
-Invoke-Command -VMName $SDNConfig.HostList[0] -Credential $adcred -ScriptBlock  {
-    New-AksHciCluster -name $using:clusterName -nodePoolName linuxnodepool -nodecount 1 -osType linux
-    Enable-AksHciArcConnection -name $using:clusterName
-}
 
-Write-Header "Checking AKS-HCI nodes and running pods"
-Invoke-Command -VMName $SDNConfig.HostList[0] -Credential $adcred -ScriptBlock  {
-    Get-AksHciCredential -name $using:clusterName -Confirm:$false
-    kubectl get nodes
-    kubectl get pods -A
-}
+Start-Transcript -Append -Path $Env:HCIBoxLogsDir\HCIBoxLogonScript.log
 
-# Set env variable deployAKSHCI to true (in case the script was run manually)
-[System.Environment]::SetEnvironmentVariable('deployAKSHCI', 'true',[System.EnvironmentVariableTarget]::Machine)
+# Changing to Jumpstart ArcBox wallpaper
+$code = @' 
+using System.Runtime.InteropServices; 
+namespace Win32{ 
+    
+    public class Wallpaper{ 
+        [DllImport("user32.dll", CharSet=CharSet.Auto)] 
+            static extern int SystemParametersInfo (int uAction , int uParam , string lpvParam , int fuWinIni) ; 
+            
+            public static void SetWallpaper(string thePath){ 
+            SystemParametersInfo(20,0,thePath,3); 
+            }
+        }
+    } 
+'@
+
+Write-Header "Changing Wallpaper"
+$imgPath="$Env:HCIBoxDir\wallpaper.png"
+Add-Type $code 
+[Win32.Wallpaper]::SetWallpaper($imgPath)
+
+# Removing the LogonScript Scheduled Task so it won't run on next reboot
+Write-Header "Removing Logon Task"
+Unregister-ScheduledTask -TaskName "HCIBoxLogonScript" -Confirm:$false
+
+# Executing the deployment logs bundle PowerShell script in a new window
+Write-Header "Uploading Log Bundle"
+Invoke-Expression 'cmd /c start Powershell -Command { 
+    $RandomString = -join ((48..57) + (97..122) | Get-Random -Count 6 | % {[char]$_})
+    Write-Host "Sleeping for 5 seconds before creating deployment logs bundle..."
+    Start-Sleep -Seconds 5
+    Write-Host "`n"
+    Write-Host "Creating deployment logs bundle"
+    7z a $Env:HCIBoxLogsDir\LogsBundle-"$RandomString".zip $Env:HCIBoxLogsDir\*.log
+}'
 
 Stop-Transcript
