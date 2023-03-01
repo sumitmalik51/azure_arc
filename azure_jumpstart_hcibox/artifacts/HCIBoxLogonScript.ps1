@@ -19,6 +19,17 @@ Start-Transcript -Path $Env:HCIBoxLogsDir\HCIBoxLogonScript.log
 Write-Header "Az CLI Login"
 az login --service-principal --username $Env:spnClientID --password $Env:spnClientSecret --tenant $Env:spnTenantId
 
+# Register Azure providers
+Write-Header "Registering Providers"
+az provider register --namespace Microsoft.HybridCompute --wait
+az provider register --namespace Microsoft.GuestConfiguration --wait
+az provider register --namespace Microsoft.Kubernetes --wait
+az provider register --namespace Microsoft.KubernetesConfiguration --wait
+az provider register --namespace Microsoft.ExtendedLocation --wait
+az provider register --namespace Microsoft.AzureArcData --wait
+az provider register --namespace Microsoft.OperationsManagement --wait
+az provider register --namespace Microsoft.AzureStackHCI --wait
+az provider register --namespace Microsoft.ResourceConnector --wait
 
 Stop-Transcript
 
