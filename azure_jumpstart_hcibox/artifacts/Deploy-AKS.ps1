@@ -33,6 +33,16 @@ $context = Get-AzContext # Azure credential
 Register-AzResourceProvider -ProviderNamespace Microsoft.Kubernetes -Confirm:$false
 Register-AzResourceProvider -ProviderNamespace Microsoft.KubernetesConfiguration -Confirm:$false
 
+# Install latest versions of Nuget and PowershellGet
+Write-Header "Install latest versions of Nuget and PowershellGet"
+Invoke-Command -VMName $SDNConfig.HostList -Credential $adcred -ScriptBlock {
+    Enable-PSRemoting -Force
+    $ProgressPreference = "SilentlyContinue"
+    Install-PackageProvider -Name NuGet -Force 
+    Set-PSRepository -Name "PSGallery" -InstallationPolicy Trusted
+    Install-Module -Name PowershellGet -Force
+    $ProgressPreference = "Continue"
+}
 
 # Install necessary AZ modules and initialize akshci on each node
 Write-Header "Install necessary AZ modules plus AksHCI module and initialize akshci on each node"
@@ -41,13 +51,11 @@ Invoke-Command -VMName $SDNConfig.HostList  -Credential $adcred -ScriptBlock {
     Write-Host "Installing Required Modules"
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     $ProgressPreference = "SilentlyContinue"
-    Install-Module -Name PowerShellGet  -Force
-    Install-Module -Name AksHci -AllowClobber -Force  -AcceptLicense
-    Invoke-Command { & "powershell.exe" } 
-    Import-Module Az.Accounts
-    Import-Module Az.Resources
-    Import-Module AzureAD
-    Import-Module AksHci
+    Install-Module -Name AksHci -Force -AcceptLicense
+    Import-Module Az.Accounts -DisableNameChecking
+    Import-Module Az.Resources -DisableNameChecking
+    Import-Module AzureAD -DisableNameChecking
+    Import-Module AksHci -DisableNameChecking
     Initialize-AksHciNode
     $ProgressPreference = "Continue"
 }
