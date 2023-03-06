@@ -41,7 +41,9 @@ Invoke-Command -VMName $SDNConfig.HostList  -Credential $adcred -ScriptBlock {
     Write-Host "Installing Required Modules"
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     $ProgressPreference = "SilentlyContinue"
-    Install-Module -Name AksHci -Force -AcceptLicense
+    Install-Module -Name PowerShellGet  -Force
+    Install-Module -Name AksHci -AllowClobber -Force  -AcceptLicense
+    Invoke-Command { & "powershell.exe" } 
     Import-Module Az.Accounts
     Import-Module Az.Resources
     Import-Module AzureAD
