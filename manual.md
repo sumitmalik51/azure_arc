@@ -1095,6 +1095,16 @@ This section creates the virtual machines that will host the Azure Local cluster
    ```
 
 4. **Create second Azure Local node VM (AzLHOST2)**:
+
+   **Why This Step is Needed**: AzLHOST2 is the second cluster node required for Azure Local high availability and Storage Spaces Direct. It uses identical configuration to AzLHOST1 to ensure cluster symmetry and proper resource distribution.
+
+   **VM Specifications**:
+   - **Purpose**: Second Azure Local cluster node for high availability
+   - **Configuration**: Identical to AzLHOST1 for cluster balance
+   - **MAC Address**: Different MAC address (00-15-5D-01-0A-13) for network uniqueness
+   - **Clustering**: Works with AzLHOST1 to provide redundancy and load distribution
+
+   **Using PowerShell (Command Method)**:
    ```powershell
    # Create second Azure Local cluster node
    $vmName = "AzLHOST2"
@@ -1128,6 +1138,35 @@ This section creates the virtual machines that will host the Azure Local cluster
    ```
 
 5. **Configure VM Network Settings**:
+
+   **Why This Step is Needed**: Network configuration establishes communication between VMs and provides consistent IP addressing. Each VM receives a static IP address in the management network for reliable connectivity and DNS resolution.
+
+   **Network Configuration**:
+   - **AzLMGMT**: 192.168.1.11 (Management and domain services)
+   - **AzLHOST1**: 192.168.1.12 (First cluster node)
+   - **AzLHOST2**: 192.168.1.13 (Second cluster node)
+   - **DNS Server**: 192.168.1.254 (Domain controller - will be configured later)
+   - **Default Gateway**: 192.168.1.1 (Router VM - will be configured later)
+
+   **Using VM Connection (GUI Method)**:
+   For each VM, connect through Hyper-V Manager:
+   - Right-click VM → "Connect" → "Connect" button
+   - Login with local Administrator credentials
+   - **Network Configuration**:
+     - Right-click network icon in system tray → "Open Network & Internet settings"
+     - Click "Change adapter options"
+     - Right-click "Ethernet" → "Properties" 
+     - Select "Internet Protocol Version 4 (TCP/IPv4)" → "Properties"
+     - Select "Use the following IP address":
+       - IP address: [VM-specific IP from list above]
+       - Subnet mask: 255.255.255.0
+       - Default gateway: 192.168.1.1
+     - Select "Use the following DNS server addresses":
+       - Preferred DNS server: 192.168.1.254
+     - Click "OK" twice
+   - **Rename Network Adapter**: Right-click adapter → Rename → "MGMT"
+
+   **Using PowerShell Remote (Command Method)**:
    ```powershell
    # Wait for VMs to boot (allow 5-10 minutes)
    Write-Output "Waiting for VMs to boot up completely..."
@@ -1165,6 +1204,22 @@ This section creates the virtual machines that will host the Azure Local cluster
    ```
 
 6. **Verify VM creation and network connectivity**:
+
+   **Why This Step is Needed**: Verification ensures all VMs are operational and can communicate before proceeding with domain configuration. This prevents issues during domain join and cluster setup phases.
+
+   **Using Hyper-V Manager (GUI Method)**:
+   - Open Hyper-V Manager
+   - Verify all VMs show "Running" status:
+     - AzLMGMT
+     - AzLHOST1  
+     - AzLHOST2
+   - **Test Network Connectivity**:
+     - Connect to each VM through Hyper-V Manager
+     - Open Command Prompt in each VM
+     - Test connectivity: `ping 192.168.1.20` (host IP)
+     - Test between VMs: `ping 192.168.1.11`, `ping 192.168.1.12`, `ping 192.168.1.13`
+
+   **Using PowerShell (Command Method)**:
    ```powershell
    # Check VM status
    Get-VM | Select-Object Name, State, CPUUsage, MemoryMB
@@ -1177,7 +1232,51 @@ This section creates the virtual machines that will host the Azure Local cluster
 
 ## Configuring the Domain Controller
 
+### Overview
+Active Directory Domain Services provides centralized authentication, authorization, and policy management for the Azure Local environment. The domain controller runs as a nested VM inside the management VM, providing DNS services and directory services essential for cluster operations and user management.
+
+### Why This Step is Needed
+- **Centralized Authentication**: Enables single sign-on and centralized user management across all VMs
+- **DNS Services**: Provides name resolution for all VMs and services in the environment  
+- **Group Policy Management**: Allows centralized configuration and security policy enforcement
+- **Azure Local Requirements**: Azure Local clusters require Active Directory for authentication and computer account management
+- **Security**: Implements Kerberos authentication and secure communication between cluster nodes
+- **Certificate Services**: Provides foundation for PKI and certificate-based authentication
+
+### Domain Architecture
+- **Domain Name**: jumpstart.local (private domain)
+- **NetBIOS Name**: JUMPSTART
+- **Domain Controller**: jumpstartdc (192.168.1.254)
+- **DNS Forwarders**: 8.8.8.8, 8.8.4.4 (for internet name resolution)
+- **Organizational Unit**: AzureLocal (for cluster computer accounts)
+
 1. **Create Domain Controller VM on AzLMGMT**:
+
+   **Why This Step is Needed**: The domain controller runs as a nested VM inside the management VM to conserve resources while providing centralized directory services. This approach simulates enterprise environments where domain controllers run on dedicated hardware.
+
+   **DC VM Specifications**:
+   - **Location**: Nested inside AzLMGMT
+   - **Memory**: 2GB (sufficient for small domain)
+   - **Processors**: 2 cores
+   - **Storage**: Copy of GUI VHDX
+   - **IP Address**: 192.168.1.254 (DNS server address)
+   - **Services**: Active Directory DS, DNS Server
+
+   **Using VM Connection to AzLMGMT (GUI Method)**:
+   - Connect to AzLMGMT through Hyper-V Manager
+   - Inside AzLMGMT, open Hyper-V Manager
+   - Create new VM with these settings:
+     - Name: "jumpstartdc"
+     - Location: "C:\VMs\jumpstartdc"
+     - Generation: 2
+     - Memory: 2048 MB (static)
+     - Network: InternalSwitch
+     - Hard disk: Copy GUI.vhdx to jumpstartdc.vhdx
+     - Processors: 2
+     - Enable TPM and Secure Boot
+     - MAC Address: 00-15-5D-01-0D-CE
+
+   **Using PowerShell Remote (Command Method)**:
    ```powershell
    # Connect to the management VM and create the domain controller VM inside it
    Invoke-Command -VMName "AzLMGMT" -Credential $localCred -ScriptBlock {
@@ -1212,6 +1311,20 @@ This section creates the virtual machines that will host the Azure Local cluster
    ```
 
 2. **Configure Domain Controller networking**:
+
+   **Why This Step is Needed**: The domain controller requires a static IP address that matches the DNS server address configured on all other VMs. This ensures consistent DNS resolution and domain authentication.
+
+   **Using VM Connection (GUI Method)**:
+   - Connect to AzLMGMT through Hyper-V Manager
+   - Inside AzLMGMT, connect to jumpstartdc VM
+   - Configure network settings:
+     - IP Address: 192.168.1.254
+     - Subnet Mask: 255.255.255.0
+     - Default Gateway: 192.168.1.1
+     - DNS Server: 192.168.1.254 (itself)
+   - Rename adapter to "DC"
+
+   **Using PowerShell Remote (Command Method)**:
    ```powershell
    # Wait for DC VM to boot
    Start-Sleep -Seconds 180
@@ -1228,6 +1341,27 @@ This section creates the virtual machines that will host the Azure Local cluster
    ```
 
 3. **Install Active Directory Domain Services**:
+
+   **Why This Step is Needed**: Active Directory Domain Services (AD DS) provides the directory service foundation, while DNS Server role provides name resolution services required for domain operations and client connectivity.
+
+   **Using Server Manager (GUI Method)**:
+   - Connect to jumpstartdc VM
+   - Server Manager opens automatically
+   - Click "Add roles and features"
+   - **Add Roles and Features Wizard**:
+     - Installation Type: Role-based or feature-based → Next
+     - Server Selection: Select jumpstartdc → Next
+     - Server Roles: Check "Active Directory Domain Services"
+     - Click "Add Features" when prompted → Next
+     - Also check "DNS Server" → Next
+     - Features: Accept defaults → Next
+     - AD DS: Read information → Next
+     - DNS Server: Read information → Next
+     - Confirmation: Check "Restart if required" → Install
+   - **Post-deployment Configuration**: 
+     - Click "Promote this server to a domain controller" when installation completes
+
+   **Using PowerShell Remote (Command Method)**:
    ```powershell
    # Install AD DS role on the domain controller
    Invoke-Command -VMName "AzLMGMT" -Credential $localCred -ScriptBlock {
@@ -1245,6 +1379,35 @@ This section creates the virtual machines that will host the Azure Local cluster
    ```
 
 4. **Promote server to Domain Controller**:
+
+   **Why This Step is Needed**: Domain promotion creates the Active Directory forest and domain, configures DNS zones, and establishes the domain controller as the authoritative source for domain authentication and name resolution.
+
+   **Domain Configuration**:
+   - **Forest**: jumpstart.local (new forest root domain)
+   - **Domain**: jumpstart.local  
+   - **NetBIOS**: JUMPSTART
+   - **DSRM Password**: Secure password for Directory Services Restore Mode
+   - **DNS Integration**: Creates integrated DNS zones for the domain
+
+   **Using Server Manager Post-Deployment (GUI Method)**:
+   - After AD DS installation, click "Promote this server to a domain controller"
+   - **Active Directory Domain Services Configuration Wizard**:
+     - Deployment Configuration:
+       - Select "Add a new forest"
+       - Root domain name: jumpstart.local → Next
+     - Domain Controller Options:
+       - Forest/Domain functional level: Windows Server 2016 or higher
+       - Check "Domain Name System (DNS) server"
+       - Check "Global Catalog (GC)"  
+       - DSRM Password: [Enter secure password] → Next
+     - DNS Options: Accept defaults → Next
+     - Additional Options: NetBIOS name: JUMPSTART → Next
+     - Paths: Accept default locations → Next
+     - Review Options: Review configuration → Next
+     - Prerequisites Check: Verify no critical issues → Install
+   - Server will restart automatically after installation
+
+   **Using PowerShell Remote (Command Method)**:
    ```powershell
    # Promote the server to domain controller
    Invoke-Command -VMName "AzLMGMT" -Credential $localCred -ScriptBlock {
