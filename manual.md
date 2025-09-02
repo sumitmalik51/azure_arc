@@ -45,22 +45,109 @@ Before starting the manual deployment, ensure you have the following:
 
 ## Initial Azure VM Deployment
 
+### Overview
+This step creates the host Azure VM that will run all nested virtual machines for the Azure Arc LocalBox environment. The VM serves as the hypervisor host and requires sufficient resources to support multiple nested VMs running Azure Local nodes, domain controller, and management services.
+
+### Why This Step is Needed
+- **Nested Virtualization Support**: The host VM must support Hyper-V to create nested VMs for Azure Local cluster nodes
+- **Resource Requirements**: Azure Local requires significant compute and memory resources, necessitating a large VM size
+- **Network Isolation**: Provides isolated environment for testing Azure Local without affecting production systems
+- **Cost Management**: Single large VM is more cost-effective than multiple smaller VMs for this scenario
+
 1. **Deploy a VM in Azure with these specifications**:
-   - Size: Standard_E32s_v5 or Standard_E32s_v6 (32 vCPUs, 256GB RAM)
-   - OS: Windows Server 2022 Datacenter or Windows Server 2025 Datacenter (Generation 2)
-   - OS disk: Premium SSD (256GB minimum)
-   - Data disk: Premium SSD (1TB) for VM storage
-   - Networking: Create new Virtual Network with subnet
-   - Public IP: Required for remote access
-   - Enable spot instances: Optional (for cost savings in test environments)
+
+   **Using Azure Portal (GUI Method)**:
+   - Navigate to Azure portal (portal.azure.com)
+   - Click "Create a resource" → "Virtual machine"
+   - **Basics tab**:
+     - Subscription: Select your subscription
+     - Resource group: Create new (e.g., "localbox-rg")
+     - Virtual machine name: Enter descriptive name (e.g., "localbox-host")
+     - Region: Choose your preferred region (e.g., East US)
+     - Availability options: No infrastructure redundancy required
+     - Security type: Standard
+     - Image: Windows Server 2022 Datacenter - x64 Gen2
+     - Size: Click "See all sizes" → Search for "Standard_E32s_v5" or "Standard_E32s_v6"
+   - **Disks tab**:
+     - OS disk type: Premium SSD (256GB minimum)
+     - Click "Create and attach a new disk"
+     - Disk name: "localbox-data"
+     - Size: 1024 GB (1TB)
+     - Disk type: Premium SSD
+   - **Networking tab**:
+     - Virtual network: Create new with default settings
+     - Subnet: Default (10.0.0.0/24)
+     - Public IP: Create new
+     - NIC network security group: Basic
+     - Public inbound ports: Allow selected ports → RDP (3389)
+   - **Management tab**: Leave defaults
+   - **Advanced tab**: Leave defaults
+   - Click "Review + create" → "Create"
+
+   **Using Azure CLI (Command Method)**:
+   ```bash
+   # Create resource group
+   az group create --name localbox-rg --location eastus
+   
+   # Create the VM with data disk
+   az vm create \
+     --resource-group localbox-rg \
+     --name localbox-host \
+     --image Win2022Datacenter \
+     --size Standard_E32s_v5 \
+     --admin-username azureuser \
+     --admin-password 'YourSecurePassword123!' \
+     --data-disk-sizes-gb 1024 \
+     --os-disk-size-gb 256 \
+     --storage-sku Premium_LRS \
+     --public-ip-sku Standard \
+     --nsg-rule RDP
+   ```
 
 2. **Connect to the VM** using Remote Desktop Protocol (RDP):
-   - Use the public IP address assigned to the VM
-   - Default port 3389 (can be customized for security)
-   - Login with the administrator account created during VM deployment
+
+   **Using Azure Portal (GUI Method)**:
+   - Navigate to your VM in Azure portal
+   - Click "Connect" → "RDP"
+   - Click "Download RDP File"
+   - Open the downloaded .rdp file
+   - Enter the administrator credentials you created during VM deployment
+   - Accept any certificate warnings
+
+   **Using Command Line**:
+   ```powershell
+   # Get the public IP address
+   $publicIP = (Get-AzPublicIpAddress -ResourceGroupName "localbox-rg").IpAddress
+   
+   # Connect using mstsc
+   mstsc /v:$publicIP
+   ```
 
 3. **Initialize and format the data disk**:
-   - Open PowerShell as Administrator and run:
+
+   **Why This Step is Needed**: The data disk provides high-performance storage for virtual machine files, VHDXs, and cluster storage. Proper initialization ensures optimal performance and reliability.
+
+   **Using Server Manager (GUI Method)**:
+   - Open Server Manager (automatically opens on first login)
+   - Click "File and Storage Services" in the left navigation
+   - Click "Disks" under "Volumes"
+   - Right-click the "Offline" disk (Disk 1, 1TB)
+   - Select "Bring Online" → Click "Yes" to confirm
+   - Right-click the disk again → Select "Initialize"
+   - Choose "GPT (GUID Partition Table)" → Click "OK"
+   - Right-click the unallocated space → Select "New Volume"
+   - **New Volume Wizard**:
+     - Click "Next" on Before You Begin
+     - Select the disk → Click "Next"
+     - Volume size: Use maximum size → Click "Next"  
+     - Drive letter: Select "V" → Click "Next"
+     - File system: NTFS
+     - Allocation unit size: 64K (65536 bytes)
+     - Volume label: "AzLocalData"
+     - Perform quick format: Checked → Click "Next"
+     - Click "Create"
+
+   **Using PowerShell (Command Method)**:
      ```powershell
      # Initialize the disk
      Get-Disk | Where-Object PartitionStyle -eq 'RAW' | Initialize-Disk -PartitionStyle GPT -PassThru
@@ -69,21 +156,61 @@ Before starting the manual deployment, ensure you have the following:
      New-Partition -DiskNumber 1 -DriveLetter V -UseMaximumSize | 
      Format-Volume -FileSystem NTFS -NewFileSystemLabel "AzLocalData" -AllocationUnitSize 65536 -Confirm:$false
      ```
-   - Alternatively, use Server Manager:
-     - Navigate to File and Storage Services → Disks
-     - Initialize the offline disk with GPT partition style
-     - Create new volume with drive letter V
-     - Format as NTFS with 64KB allocation unit size
 
 ## Configuring the Host VM
 
+### Overview
+This section prepares the host VM for running nested virtualization by configuring the operating system, creating directory structure, and setting up essential services. These configurations ensure optimal performance and proper resource allocation for the nested Azure Local environment.
+
+### Why This Step is Needed
+- **Storage Optimization**: Extends the OS disk and creates organized directory structure for VM files
+- **Environment Setup**: Establishes consistent paths and variables used throughout the deployment
+- **Security Configuration**: Disables unnecessary prompts and configures authentication for nested VM management
+- **Performance Tuning**: Optimizes system settings for virtualization workloads
+
 1. **Extend the C:\ drive to maximum size**:
+
+   **Why This Step is Needed**: The OS disk may not utilize all available space by default. Extending ensures maximum storage availability for system files, logs, and temporary data.
+
+   **Using Disk Management (GUI Method)**:
+   - Right-click "Start" button → Select "Disk Management"
+   - Right-click the C: drive → Select "Extend Volume"
+   - **Extend Volume Wizard**:
+     - Click "Next" on Welcome screen
+     - Available space should show all unallocated space → Click "Next"
+     - Click "Finish"
+
+   **Using PowerShell (Command Method)**:
    ```powershell
    # Extend C: drive to use all available space
    Resize-Partition -DriveLetter C -Size (Get-PartitionSupportedSize -DriveLetter C).SizeMax
    ```
 
 2. **Create the directory structure**:
+
+   **Why This Step is Needed**: Establishes standardized folder structure for organizing VM files, logs, configuration files, and tools. This organization is essential for automation scripts and maintenance tasks.
+
+   **Using File Explorer (GUI Method)**:
+   - Open File Explorer (Windows key + E)
+   - Navigate to C:\ drive
+   - Create the following folders by right-clicking → "New" → "Folder":
+     - C:\LocalBox (main folder)
+     - Inside C:\LocalBox, create:
+       - DSC (for PowerShell DSC configurations)
+       - Tests (for validation scripts)
+       - Virtual Machines (for nested VM configurations)
+       - Logs (for deployment and operation logs)
+       - Icons (for desktop shortcuts and branding)
+       - VHD (for VHDX file storage)
+       - SDN (for Software Defined Networking configs)
+       - KeyVault (for certificate and secret storage)
+       - Windows Admin Center (for WAC installer)
+       - agentScript (for Azure Arc agent scripts)
+     - C:\Tools (for management utilities)
+     - C:\Temp (for temporary files)
+     - V:\VMs (on the data disk for VM storage)
+
+   **Using PowerShell (Command Method)**:
    ```powershell
    # Create main LocalBox directory
    $LocalBoxPath = "C:\LocalBox"
@@ -113,6 +240,21 @@ Before starting the manual deployment, ensure you have the following:
    ```
 
 3. **Set environment variables**:
+
+   **Why This Step is Needed**: Environment variables provide consistent paths that automation scripts and applications can reference. This ensures all tools know where to find configuration files, logs, and resources.
+
+   **Using System Properties (GUI Method)**:
+   - Right-click "This PC" → Properties → "Advanced system settings"
+   - Click "Environment Variables"
+   - Under "System variables" section, click "New"
+   - Add each of these variables:
+     - Variable name: `LocalBoxDir`, Variable value: `C:\LocalBox`
+     - Variable name: `LocalBoxLogsDir`, Variable value: `C:\LocalBox\Logs` 
+     - Variable name: `LocalBoxTestsDir`, Variable value: `C:\LocalBox\Tests`
+     - Variable name: `LocalBoxConfigFile`, Variable value: `C:\LocalBox\LocalBox-Config.psd1`
+   - Click "OK" to close all windows
+
+   **Using PowerShell (Command Method)**:
    ```powershell
    # Set system environment variables
    [System.Environment]::SetEnvironmentVariable('LocalBoxDir', 'C:\LocalBox', [System.EnvironmentVariableTarget]::Machine)
@@ -122,6 +264,25 @@ Before starting the manual deployment, ensure you have the following:
    ```
 
 4. **Disable unnecessary features**:
+
+   **Why This Step is Needed**: Removes distractions and prompts that interfere with automated deployments and improves the user experience during manual operations.
+
+   **Using GUI Methods**:
+   - **Disable Server Manager startup**:
+     - Open Server Manager → Click "Manage" menu → "Server Manager Properties"
+     - Check "Do not start Server Manager automatically at logon"
+   - **Disable WAC prompt**:
+     - Open Registry Editor (regedit.exe)
+     - Navigate to `HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\ServerManager`
+     - Right-click → New → DWORD (32-bit) Value
+     - Name: `DoNotPopWACConsoleAtSMLaunch`
+     - Value: `1`
+   - **Disable Network Profile prompt**:
+     - In Registry Editor, navigate to `HKEY_LOCAL_MACHINE\System\CurrentControlSet\Control\Network`
+     - Right-click "Network" → New → Key
+     - Name the key: `NewNetworkWindowOff`
+
+   **Using PowerShell (Command Method)**:
    ```powershell
    # Disable Windows Server Manager scheduled task
    Get-ScheduledTask -TaskName ServerManager | Disable-ScheduledTask
@@ -136,6 +297,10 @@ Before starting the manual deployment, ensure you have the following:
    ```
 
 5. **Configure CredSSP and WinRM for nested virtualization**:
+
+   **Why This Step is Needed**: CredSSP (Credential Security Support Provider) and WinRM (Windows Remote Management) enable PowerShell remote management of nested VMs. This is essential for automating configuration of VMs running inside the host VM.
+
+   **Using PowerShell (Command Method)**:
    ```powershell
    # Enable PowerShell Remoting
    Enable-PSRemoting -Force
@@ -148,9 +313,40 @@ Before starting the manual deployment, ensure you have the following:
    Enable-WSManCredSSP -Role Client -DelegateComputer $Env:COMPUTERNAME -Force
    ```
 
+   **Note**: CredSSP is required but has security implications. In production environments, configure specific computer names instead of using wildcards.
+
 ## Installing Required Software
 
+### Overview
+This section installs all necessary software, tools, and PowerShell modules required for Azure Local deployment and management. The software stack includes PowerShell 7, Azure CLI, management tools, and specialized modules for Azure Arc and HCI management.
+
+### Why This Step is Needed
+- **Modern PowerShell**: PowerShell 7 provides enhanced Azure integration and cross-platform compatibility
+- **Azure Integration**: Azure CLI and Az PowerShell modules enable Azure resource management
+- **Automation Tools**: WinGet and package managers streamline software installation and updates
+- **Management Utilities**: Tools like Windows Admin Center provide GUI-based cluster management
+- **Performance**: Proper software configuration optimizes deployment speed and reliability
+
 1. **Install PowerShell 7**:
+
+   **Why This Step is Needed**: PowerShell 7 offers better performance, enhanced Azure integration, and modern features required by the latest Azure modules and automation scripts.
+
+   **Using GUI Method**:
+   - Open web browser and navigate to: https://github.com/PowerShell/PowerShell/releases/latest
+   - Download the latest "PowerShell-[version]-win-x64.msi" file
+   - Double-click the downloaded MSI file
+   - **PowerShell 7 Setup Wizard**:
+     - Click "Next" on Welcome screen
+     - Accept license agreement → Click "Next"
+     - Installation folder: Keep default → Click "Next"
+     - Features: Check all options including:
+       - "Add PowerShell to Path Environment Variable"
+       - "Add 'Open here' context menus to Explorer"
+       - "Enable PowerShell remoting"
+     - Click "Install"
+     - Click "Finish" when installation completes
+
+   **Using PowerShell (Command Method)**:
    ```powershell
    # Download and install PowerShell 7 (latest version)
    $url = "https://github.com/PowerShell/PowerShell/releases/latest"
@@ -162,6 +358,20 @@ Before starting the manual deployment, ensure you have the following:
    ```
 
 2. **Install PowerShell modules**:
+
+   **Why This Step is Needed**: These modules provide essential cmdlets for Azure management, Azure Arc operations, HCI cluster management, and testing. Each module serves specific functions in the deployment and ongoing management.
+
+   **Module Descriptions**:
+   - **Az**: Core Azure PowerShell module for resource management
+   - **Az.ConnectedMachine**: Manages Azure Arc-enabled servers
+   - **Azure.Arc.Jumpstart.Common**: Common functions for JumpStart scenarios
+   - **Azure.Arc.Jumpstart.LocalBox**: Specific LocalBox automation functions
+   - **Microsoft.PowerShell.SecretManagement**: Secure credential storage
+   - **Pester**: PowerShell testing framework for validation scripts
+   - **Microsoft.WinGet.Client**: Programmatic access to Windows Package Manager
+   - **Microsoft.WinGet.DSC**: Desired State Configuration integration
+
+   **Using PowerShell (Command Method)**:
    ```powershell
    # Install required package providers
    Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force
@@ -185,7 +395,27 @@ Before starting the manual deployment, ensure you have the following:
    }
    ```
 
+   **Alternative GUI Method** (for individual modules):
+   - Open PowerShell ISE or PowerShell 7 as Administrator
+   - Use PowerShell Gallery website (https://www.powershellgallery.com/) to find specific modules
+   - For each module, run: `Install-Module -Name [ModuleName] -Scope AllUsers -Force`
+
 3. **Install essential tools using WinGet**:
+
+   **Why This Step is Needed**: These tools provide comprehensive management, development, and troubleshooting capabilities for the Azure Local environment. WinGet ensures consistent, automated installation with proper versioning.
+
+   **Tool Descriptions**:
+   - **Git**: Version control for configuration management
+   - **Visual Studio Code**: Advanced text editor for scripts and configs
+   - **Azure CLI**: Command-line interface for Azure operations
+   - **kubectl**: Kubernetes command-line tool for container management
+   - **AzCopy**: High-performance file transfer for Azure Storage
+   - **Helm**: Kubernetes package manager
+   - **BGInfo**: System information display utility
+   - **SQL Server Management Studio**: Database management tools
+   - **Azure Data Studio**: Modern database tool for SQL Server
+
+   **Using PowerShell (Command Method)**:
    ```powershell
    # Install WinGet packages for development and management tools
    $packages = @(
